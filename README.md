@@ -1,6 +1,6 @@
 ## YA_MCPServer_Template
 
-[一句话功能简介]
+[一句话功能简介]rr
 
 ### 组员信息
 
