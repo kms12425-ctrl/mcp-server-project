@@ -29,7 +29,9 @@ def setup_logger():
     # ------------- 控制台输出 -------------
     console_cfg = cfg.get("console", {})
     if console_cfg.get("enabled", True):
-        console_handler = logging.StreamHandler(sys.stdout)
+        # MCP server via stdio requires stdout to be clean for JSON-RPC
+        # So we switch console logging to stderr
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(console_cfg.get("level", "INFO").upper())
 
         color_format = (
