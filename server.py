@@ -72,8 +72,10 @@ class YA_MCPServer:
         """通过 SSE 运行 MCP Server"""
         env_host = os.getenv("HOST")
         env_port = os.getenv("PORT")
-        host = env_host if env_host else get_config("transport.host", "0.0.0.0")
-        port = int(env_port) if env_port else get_config("transport.port", 12345)
+        host = env_host if env_host else get_config(
+            "transport.host", "0.0.0.0")
+        port = int(env_port) if env_port else get_config(
+            "transport.port", 12345)
 
         self.logger.info(
             f"Running MCP server via SSE: {self.server_name} ({host}:{port})"
