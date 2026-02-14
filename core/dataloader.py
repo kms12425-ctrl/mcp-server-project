@@ -14,6 +14,10 @@ import pandas as pd
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 
+
+from curl_cffi import requests
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +68,14 @@ class StockDataLoader:
 
         os.makedirs(self.cache_dir, exist_ok=True)
 
+        # 【新增】初始化一个具备浏览器特征的持久化 Session
+        self.session = requests.Session(impersonate="chrome")
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+        })
+
     def _cache_path(self) -> str:
         safe_ticker = self.ticker.replace('/', '_')
         name = f"yf_{safe_ticker}_{self.period}_{self.interval}.pkl"
@@ -108,29 +120,39 @@ class StockDataLoader:
         # Try to load GITHUB_TOKEN from environment if not already set
         # Using a .env file is recommended for local development
         if 'GITHUB_TOKEN' not in os.environ:
-             # automatic loading from .env via python-dotenv if available could go here
-             pass
+            # automatic loading from .env via python-dotenv if available could go here
+            pass
         last_exc = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                ticker_obj = yf.Ticker(self.ticker)
+                # 【修改】直接使用 self.session 传入 yf.Ticker
+                # 这样 yfinance 所有的内部请求（包括获取 Cookie 和 Crumb）都会通过 curl_cffi 模拟浏览器
+                ticker_obj = yf.Ticker(self.ticker, session=self.session)
+
                 df = ticker_obj.history(
-                    period=self.period, interval=self.interval, start=self.start, end=self.end
+                    period=self.period,
+                    interval=self.interval,
+                    start=self.start,
+                    end=self.end,
+                    timeout=15  # 增加超时保护
                 )
+
                 if df is None or df.empty:
-                    raise ValueError('no data downloaded')
+                    # 如果返回 429，yfinance 0.2.59+ 可能会抛出特定异常，这里捕获通用异常
+                    raise ValueError('no data downloaded or rate limited')
+
                 self.df = df
-                try:
-                    self._save_cache(df)
-                except Exception:
-                    pass
+                self._save_cache(df)
                 return df
+
             except Exception as e:
                 last_exc = e
-                backoff = self.backoff_base * (2 ** (attempt - 1))
-                jitter = random.uniform(0, backoff * 0.1)
+                # 指数退避策略优化：429 错误建议等待更久
+                backoff = self.backoff_base * (2 ** (attempt))  # 增加起始等待时长
+                jitter = random.uniform(0, backoff * 0.2)
                 wait = backoff + jitter
-                logger.warning('fetch attempt %d failed: %s. retrying in %.1fs', attempt, e, wait)
+                logger.warning(
+                    'fetch attempt %d failed: %s. retrying in %.1fs', attempt, e, wait)
                 time.sleep(wait)
 
         # all retries failed, try stale cache
@@ -152,7 +174,8 @@ class StockDataLoader:
 
         df = self.df
         if self.feature not in df.columns:
-            raise ValueError(f"feature column '{self.feature}' not found in data")
+            raise ValueError(
+                f"feature column '{self.feature}' not found in data")
 
         values = df[self.feature].values.reshape(-1, 1).astype(np.float32)
 
@@ -161,12 +184,13 @@ class StockDataLoader:
 
         seq = self.sequence_length
         if len(scaled) <= seq:
-            raise ValueError(f"not enough data points ({len(scaled)}) for sequence_length={seq}")
+            raise ValueError(
+                f"not enough data points ({len(scaled)}) for sequence_length={seq}")
 
         X_list = []
         y_list = []
         for i in range(seq, len(scaled)):
-            X_list.append(scaled[i - seq : i, 0])
+            X_list.append(scaled[i - seq: i, 0])
             y_list.append(scaled[i, 0])
 
         X = np.array(X_list, dtype=np.float32)
@@ -185,4 +209,3 @@ if __name__ == '__main__':
         print('y.shape =', y.shape)
     except Exception as e:
         print('fetch failed:', e)
-
