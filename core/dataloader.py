@@ -1,39 +1,40 @@
-"""Tools: StockDataLoader with MinMax scaling, sequence serialization, caching and retry/backoff.
+"""Tools: ParquetDataLoader with QFQ (Forward Adjustment), MinMax scaling.
 
-This module is intended for processing data (not resource registration).
+Uses 'data/full_data.parquet' and applies adjustment factor based on 'close' vs 'raw_close'.
 """
 import logging
 import os
 import pickle
 import time
-import random
 from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
-
-
-from curl_cffi import requests
-
 
 logger = logging.getLogger(__name__)
 
 
-class StockDataLoader:
-    """Download, normalize (MinMax) and serialize time-series into (X, y).
+class ParquetDataLoader:
+    """Download (from Parquet), normalize (MinMax) and serialize time-series into (X, y).
+
+    Applies Forward Adjustment (QFQ) using:
+      Factor = close / raw_close
+      Adj_Open = open * Factor
+      Adj_High = high * Factor
+      Adj_Low  = low  * Factor
+      (close is already adjusted in the dataset)
 
     Parameters
     ----------
-    ticker: stock ticker symbol
+    ticker: stock ticker symbol (e.g. '005930 KS')
     start, end: optional date strings
-    period, interval: passed to yfinance
+    period, interval: Ignored for local parquet, kept for compatibility/caching
     sequence_length: number of past steps used to predict next step
     feature: column to use (default 'Close')
     cache_dir: directory to store cached pickles
     cache_ttl_seconds: cache lifetime in seconds
-    max_retries, backoff_base: retry/backoff parameters
+    max_retries, backoff_base: ignored (no network calls)
     """
 
     def __init__(
@@ -58,27 +59,24 @@ class StockDataLoader:
         self.sequence_length = int(sequence_length)
         self.feature = feature
 
-        self.cache_dir = cache_dir or ".cache"
+        # Use a distinct cache directory for parquet-derived data
+        self.cache_dir = cache_dir or ".cache_parquet"
         self.cache_ttl_seconds = int(cache_ttl_seconds)
-        self.max_retries = int(max_retries)
-        self.backoff_base = float(backoff_base)
 
         self.df: Optional[pd.DataFrame] = None
         self.scaler: Optional[MinMaxScaler] = None
 
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        # 【新增】初始化一个具备浏览器特征的持久化 Session
-        self.session = requests.Session(impersonate="chrome")
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-        })
+        # Local Parquet path
+        # Assuming this file is in core/, and data is in ../data/
+        self.parquet_path = os.path.join(os.path.dirname(
+            os.path.dirname(__file__)), 'data', 'full_data.parquet')
 
     def _cache_path(self) -> str:
-        safe_ticker = self.ticker.replace('/', '_')
-        name = f"yf_{safe_ticker}_{self.period}_{self.interval}.pkl"
+        safe_ticker = self.ticker.replace('/', '_').replace(' ', '_')
+        # name includes qfq to differentiate
+        name = f"qfq_{safe_ticker}_{self.period}_{self.interval}.pkl"
         return os.path.join(self.cache_dir, name)
 
     def _load_cache(self, allow_expired: bool = False) -> Optional[pd.DataFrame]:
@@ -110,59 +108,122 @@ class StockDataLoader:
             logger.exception('failed saving cache')
 
     def fetch(self, use_cache: bool = True) -> pd.DataFrame:
-        """Fetch data from yfinance with retry/backoff and cache support."""
+        """Fetch data from local Parquet with predicate pushdown and apply QFQ."""
         if use_cache:
             cached = self._load_cache()
             if cached is not None:
                 self.df = cached
                 return cached
 
-        # Try to load GITHUB_TOKEN from environment if not already set
-        # Using a .env file is recommended for local development
-        if 'GITHUB_TOKEN' not in os.environ:
-            # automatic loading from .env via python-dotenv if available could go here
-            pass
-        last_exc = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                # 【修改】直接使用 self.session 传入 yf.Ticker
-                # 这样 yfinance 所有的内部请求（包括获取 Cookie 和 Crumb）都会通过 curl_cffi 模拟浏览器
-                ticker_obj = yf.Ticker(self.ticker, session=self.session)
+        if not os.path.exists(self.parquet_path):
+            raise FileNotFoundError(
+                f"Parquet file not found at {self.parquet_path}")
 
-                df = ticker_obj.history(
-                    period=self.period,
-                    interval=self.interval,
-                    start=self.start,
-                    end=self.end,
-                    timeout=15  # 增加超时保护
-                )
+        try:
+            logger.info(
+                f"Loading data from Parquet: {self.parquet_path} for {self.ticker}")
 
-                if df is None or df.empty:
-                    # 如果返回 429，yfinance 0.2.59+ 可能会抛出特定异常，这里捕获通用异常
-                    raise ValueError('no data downloaded or rate limited')
+            # Efficiently load only specific ticker using pushdown filters
+            # Parquet columns: ['ticker', 'date', 'close', 'raw_close', 'high', 'low', 'open', 'volume']
+            df = pd.read_parquet(
+                self.parquet_path,
+                filters=[('ticker', '==', self.ticker)]
+            )
 
-                self.df = df
-                self._save_cache(df)
-                return df
-
-            except Exception as e:
-                last_exc = e
-                # 指数退避策略优化：429 错误建议等待更久
-                backoff = self.backoff_base * (2 ** (attempt))  # 增加起始等待时长
-                jitter = random.uniform(0, backoff * 0.2)
-                wait = backoff + jitter
+            if df.empty:
                 logger.warning(
-                    'fetch attempt %d failed: %s. retrying in %.1fs', attempt, e, wait)
-                time.sleep(wait)
+                    f"Ticker {self.ticker} not found in Parquet dataset.")
+                # Fallback check? No, strictly use Parquet here.
+                raise ValueError(
+                    f"No data found for ticker {self.ticker} in parquet dataset")
 
-        # all retries failed, try stale cache
-        cached = self._load_cache(allow_expired=True)
-        if cached is not None:
-            logger.warning('returning stale cache due to fetch failures')
-            self.df = cached
-            return cached
+            # --- Data Processing & QFQ Logic ---
 
-        raise last_exc
+            # 1. Convert Date (int YYYYMMDD -> datetime)
+            df['Date'] = pd.to_datetime(
+                df['date'].astype(str), format='%Y%m%d')
+            df.set_index('Date', inplace=True)
+            df.sort_index(inplace=True)
+
+            # 2. QFQ (Forward Adjustment)
+            # Factor = close / raw_close
+            # close in this dataset is typically the adjusted close.
+            # raw_close is the unadjusted close.
+
+            # Filter valid data
+            df = df[df['raw_close'] != 0].copy()
+
+            # Calculate Adjustment Factor
+            adj_factor = df['close'] / df['raw_close']
+
+            # Apply Factor to OHLC (Close is already adjusted)
+            df['Open'] = df['open'] * adj_factor
+            df['High'] = df['high'] * adj_factor
+            df['Low'] = df['low'] * adj_factor
+            df['Close'] = df['close']
+            df['Volume'] = df['volume']  # Keep volume raw/as-is
+
+            # Keep only standard columns
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+
+            # 3. Filter by start/end date and period
+            end_date_ref = df.index.max()
+            if self.end:
+                end_date_ref = pd.Timestamp(self.end)
+                df = df[df.index <= end_date_ref]
+
+            start_date_ref = None
+            if self.start:
+                start_date_ref = pd.Timestamp(self.start)
+            elif self.period and self.period != 'max':
+                # Calculate start date based on period relative to end_date_ref
+                # Example: '1y' -> 1 year, '5y' -> 5 years, '6mo' -> 6 months
+                try:
+                    p = self.period.lower()
+                    if p.endswith('y'):
+                        years = int(p[:-1])
+                        start_date_ref = end_date_ref - \
+                            pd.DateOffset(years=years)
+                    elif p.endswith('mo'):
+                        months = int(p[:-2])
+                        start_date_ref = end_date_ref - \
+                            pd.DateOffset(months=months)
+                    elif p.endswith('d'):
+                        days = int(p[:-1])
+                        start_date_ref = end_date_ref - \
+                            pd.DateOffset(days=days)
+                    else:
+                        logger.warning(
+                            f"Unknown period format '{self.period}', defaulting to full history.")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to parse period '{self.period}': {e}")
+
+            if start_date_ref:
+                df = df[df.index >= start_date_ref]
+
+            if df.empty:
+                raise ValueError(
+                    f"Ticker {self.ticker} found but no data in specified date range.")
+
+            # Identify columns to float (ensure float32/64)
+            cols_to_float = ["Open", "High", "Low", "Close", "Volume"]
+            for col in cols_to_float:
+                features_available = [
+                    c for c in cols_to_float if c in df.columns]
+                df[features_available] = df[features_available].apply(
+                    pd.to_numeric, errors='coerce')
+
+            # Drop any rows with NaN values (crucial for training)
+            df.dropna(inplace=True)
+
+            self.df = df
+            self._save_cache(df)
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to load from Parquet: {e}")
+            raise e
 
     def get_data(self, use_cache: bool = True) -> Tuple[np.ndarray, np.ndarray, MinMaxScaler]:
         """Return (X, y, scaler). X shape: (samples, seq_len, 1), y shape: (samples,).
@@ -175,10 +236,12 @@ class StockDataLoader:
         df = self.df
         if self.feature not in df.columns:
             raise ValueError(
-                f"feature column '{self.feature}' not found in data")
+                f"feature column '{self.feature}' not found in data. Options: {df.columns.tolist()}")
 
+        # Extract values
         values = df[self.feature].values.reshape(-1, 1).astype(np.float32)
 
+        # Normalize
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         scaled = self.scaler.fit_transform(values)
 
@@ -187,6 +250,7 @@ class StockDataLoader:
             raise ValueError(
                 f"not enough data points ({len(scaled)}) for sequence_length={seq}")
 
+        # Create Sequences
         X_list = []
         y_list = []
         for i in range(seq, len(scaled)):
@@ -195,6 +259,8 @@ class StockDataLoader:
 
         X = np.array(X_list, dtype=np.float32)
         y = np.array(y_list, dtype=np.float32)
+
+        # Reshape X to (samples, seq_len, 1)
         X = X.reshape((X.shape[0], X.shape[1], 1))
 
         return X, y, self.scaler
@@ -202,8 +268,16 @@ class StockDataLoader:
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    loader = StockDataLoader('AAPL', period='6mo', sequence_length=30)
+    # Test with a ticker known to be in the parquet (e.g., from user context '000060 KS')
+    # Or just use AAPL if it exists.
+    loader = ParquetDataLoader('000060 KS', sequence_length=30)
     try:
+        print("Fetching data...")
+        df = loader.fetch()
+        print(f"Data Loaded. Shape: {df.shape}")
+        print(df.head())
+        print(df.tail())
+
         X, y, scaler = loader.get_data()
         print('X.shape =', X.shape)
         print('y.shape =', y.shape)

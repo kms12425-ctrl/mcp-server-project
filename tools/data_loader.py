@@ -2,6 +2,7 @@
 
 This module is intended for processing data (not resource registration).
 """
+from tools import YA_MCPServer_Tool
 import logging
 import os
 import pickle
@@ -11,7 +12,6 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class StockDataLoader:
     ----------
     ticker: stock ticker symbol
     start, end: optional date strings
-    period, interval: passed to yfinance
+    period, interval: Ignored, kept for compatibility
     sequence_length: number of past steps used to predict next step
     feature: column to use (default 'Close')
     cache_dir: directory to store cached pickles
@@ -63,6 +63,9 @@ class StockDataLoader:
         self.scaler: Optional[MinMaxScaler] = None
 
         os.makedirs(self.cache_dir, exist_ok=True)
+        # Local CSV path
+        self.csv_path = os.path.join(os.path.dirname(
+            os.path.dirname(__file__)), 'data', 'stock_prices_daily.csv')
 
     def _cache_path(self) -> str:
         safe_ticker = self.ticker.replace('/', '_')
@@ -98,44 +101,60 @@ class StockDataLoader:
             logger.exception('failed saving cache')
 
     def fetch(self, use_cache: bool = True) -> pd.DataFrame:
-        """Fetch data from yfinance with retry/backoff and cache support."""
+        """Fetch data from local CSV only."""
         if use_cache:
             cached = self._load_cache()
             if cached is not None:
                 self.df = cached
                 return cached
 
-        last_exc = None
-        for attempt in range(1, self.max_retries + 1):
+        # Try to load from local CSV
+        if os.path.exists(self.csv_path):
             try:
-                ticker_obj = yf.Ticker(self.ticker)
-                df = ticker_obj.history(
-                    period=self.period, interval=self.interval, start=self.start, end=self.end
-                )
-                if df is None or df.empty:
-                    raise ValueError('no data downloaded')
-                self.df = df
-                try:
-                    self._save_cache(df)
-                except Exception:
-                    pass
-                return df
+                # Use pyarrow engine for better performance if installed, otherwise c format
+                raw_df = pd.read_csv(self.csv_path)
+
+                # Filter by ticker
+                df = raw_df[raw_df['Ticker'] == self.ticker].copy()
+
+                if not df.empty:
+                    # Rename columns to standard format if needed
+                    # Convert Date to datetime and set index
+                    # Make timezone naive to match previous behavior if needed or keep aware
+                    df['Date'] = pd.to_datetime(
+                        df['Date'], utc=True).dt.tz_convert(None)
+                    df.set_index('Date', inplace=True)
+                    df.sort_index(inplace=True)
+
+                    # Filter by start/end date
+                    if self.start:
+                        df = df[df.index >= pd.Timestamp(self.start)]
+                    if self.end:
+                        df = df[df.index <= pd.Timestamp(self.end)]
+
+                    if not df.empty:
+                        self.df = df
+                        # Identify columns to float
+                        cols_to_float = ["Open", "High", "Low",
+                                         "Close", "Adj_Close", "Volume"]
+                        for col in cols_to_float:
+                            if col in df.columns:
+                                df[col] = pd.to_numeric(
+                                    df[col], errors='coerce')
+
+                        self._save_cache(df)
+                        return df
+                    else:
+                        logger.warning(
+                            f"Ticker {self.ticker} found in CSV but no data in specified date range.")
+                else:
+                    logger.warning(
+                        f"Ticker {self.ticker} not found in local CSV.")
             except Exception as e:
-                last_exc = e
-                backoff = self.backoff_base * (2 ** (attempt - 1))
-                jitter = random.uniform(0, backoff * 0.1)
-                wait = backoff + jitter
-                logger.warning('fetch attempt %d failed: %s. retrying in %.1fs', attempt, e, wait)
-                time.sleep(wait)
+                logger.error(f"Failed to load from CSV: {e}")
 
-        # all retries failed, try stale cache
-        cached = self._load_cache(allow_expired=True)
-        if cached is not None:
-            logger.warning('returning stale cache due to fetch failures')
-            self.df = cached
-            return cached
-
-        raise last_exc
+        raise ValueError(
+            f"No data found for ticker {self.ticker} in local dataset")
 
     def get_data(self, use_cache: bool = True) -> Tuple[np.ndarray, np.ndarray, MinMaxScaler]:
         """Return (X, y, scaler). X shape: (samples, seq_len, 1), y shape: (samples,).
@@ -147,7 +166,8 @@ class StockDataLoader:
 
         df = self.df
         if self.feature not in df.columns:
-            raise ValueError(f"feature column '{self.feature}' not found in data")
+            raise ValueError(
+                f"feature column '{self.feature}' not found in data")
 
         values = df[self.feature].values.reshape(-1, 1).astype(np.float32)
 
@@ -156,12 +176,13 @@ class StockDataLoader:
 
         seq = self.sequence_length
         if len(scaled) <= seq:
-            raise ValueError(f"not enough data points ({len(scaled)}) for sequence_length={seq}")
+            raise ValueError(
+                f"not enough data points ({len(scaled)}) for sequence_length={seq}")
 
         X_list = []
         y_list = []
         for i in range(seq, len(scaled)):
-            X_list.append(scaled[i - seq : i, 0])
+            X_list.append(scaled[i - seq: i, 0])
             y_list.append(scaled[i, 0])
 
         X = np.array(X_list, dtype=np.float32)
@@ -183,13 +204,12 @@ if __name__ == '__main__':
 
 
 # Tool-style functions (match tools/hello_tool.py format)
-from tools import YA_MCPServer_Tool
 
 
 @YA_MCPServer_Tool(
     name="fetch_stock_history",
     title="Fetch Stock History",
-    description="使用 yfinance 下载股票历史（返回记录列表）",
+    description="从本地 CSV 获取股票历史数据（返回记录列表）",
 )
 async def fetch_stock_history(ticker: str, period: str = "1y", interval: str = "1d"):
     """下载并返回股票历史记录的序列化列表。
@@ -204,7 +224,8 @@ async def fetch_stock_history(ticker: str, period: str = "1y", interval: str = "
         df_reset['Date'] = df_reset['Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
     else:
         try:
-            df_reset.iloc[:, 0] = pd.to_datetime(df_reset.iloc[:, 0]).dt.strftime('%Y-%m-%d %H:%M:%S')
+            df_reset.iloc[:, 0] = pd.to_datetime(
+                df_reset.iloc[:, 0]).dt.strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
             pass
     return df_reset.to_dict(orient='records')
@@ -217,7 +238,8 @@ async def fetch_stock_history(ticker: str, period: str = "1y", interval: str = "
 )
 async def prepare_stock_sequences(ticker: str, period: str = "1y", interval: str = "1d", sequence_length: int = 30):
     """下载并返回序列化训练样本的形状与示例，便于前端展示或快速检查。"""
-    loader = StockDataLoader(ticker, period=period, interval=interval, sequence_length=sequence_length)
+    loader = StockDataLoader(
+        ticker, period=period, interval=interval, sequence_length=sequence_length)
     X, y, scaler = loader.get_data(use_cache=True)
     sample = {
         "X_shape": list(X.shape),
