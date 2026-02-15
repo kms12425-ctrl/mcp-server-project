@@ -1,48 +1,24 @@
-import yfinance as yf
-from curl_cffi import requests
 import pandas as pd
+from core.dataloader import StockDataLoader
 
 
-def test_yfinance_fetch():
+def test_local_fetch():
     ticker_symbol = "AAPL"
-    print(f"Starting test for ticker: {ticker_symbol}")
+    print(f"Starting Local CSV test for ticker: {ticker_symbol}")
 
-    # # Method 1: Standard yfinance usage (Reference: https://ranaroussi.github.io/yfinance/)
-    # print("\n[Test 1] Standard yfinance fetch...")
-    # try:
-    #     t = yf.Ticker(ticker_symbol)
-    #     # Using a short period for quick testing
-    #     hist = t.history(period="5d")
-
-    #     if not hist.empty:
-    #         print("✅ Success! specific data fetched:")
-    #         print(hist[['Close', 'Volume']])
-    #     else:
-    #         print("⚠️ Result is empty (might be rate limited without custom session).")
-    # except Exception as e:
-    #     print(f"❌ Failed: {e}")
-
-    # Method 2: With curl_cffi session (User's specific fix)
-    print("\n[Test 2] Fetch with curl_cffi session (impersonate='chrome')...")
     try:
-        session = requests.Session(impersonate="chrome")
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-        })
+        loader = StockDataLoader(ticker_symbol)
+        df = loader.fetch(use_cache=False)
 
-        t = yf.Ticker(ticker_symbol, session=session)
-        hist = t.history(period="5d")
-
-        if not hist.empty:
-            print("✅ Success! specific data fetched with session:")
-            print(hist[['Close', 'Volume']])
+        if not df is None and not df.empty:
+            print("✅ Success! Data fetched from CSV:")
+            print(df[['Open', 'Close', 'Volume']].tail())
         else:
-            print("⚠️ Result is empty even with session.")
+            print("⚠️ Result is empty.")
+            
     except Exception as e:
-        print(f"❌ Failed with session: {e}")
+        print(f"❌ Failed: {e}")
 
 
 if __name__ == "__main__":
-    test_yfinance_fetch()
+    test_local_fetch()
