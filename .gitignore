@@ -9,3 +9,9 @@
 /**/wheels/
 /**/*.egg-info
 /**/.vscode
+*.parquet
+.cache/
+.cache_parquet/
+models/*.h5
+models/*.joblib
+models/*.png
