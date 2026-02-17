@@ -5,7 +5,8 @@
 from typing import Callable, List, Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.types import Icon
-import pkgutil, importlib
+import pkgutil
+import importlib
 from modules.YA_Common.utils.logger import get_logger
 
 logger = get_logger("YA_MCPServer_Prompts")
@@ -47,8 +48,27 @@ def YA_MCPServer_Prompt(
 
     if callable(name):
         func = name
-        name = None
-        return decorator(func)
+        # 当作无参装饰器直接调用，此时 name, title 等参数均为默认值 None
+        # 我们不能直接调用 decorator(func)，因为 decorator 闭包捕获的 name 是 func (callable)
+        # 应该重新定义 decorator 逻辑或者正确处理
+        # 这里实际上意味着 @YA_MCPServer_Prompt (无括号)
+        # 所以必须把 decorator 的逻辑应用在这个 func 上，且配置为默认值
+
+        if not enable:
+            return func
+
+        _PROMPT_REGISTRY.append(
+            (
+                func,
+                {
+                    "name": None,  # 或者使用 func.__name__ ? 通常由 FastMCP 推断
+                    "title": None,
+                    "description": None,
+                    "icons": None,
+                },
+            )
+        )
+        return func
 
     return decorator
 
@@ -64,6 +84,10 @@ def register_prompts(app: FastMCP):
             importlib.import_module(module_name)
 
     for func, kwargs in _PROMPT_REGISTRY:
+        if func is None:
+            logger.warning("Skipping prompt registration because func is None")
+            continue
+
         app.prompt(
             name=kwargs.get("name"),
             title=kwargs.get("title"),

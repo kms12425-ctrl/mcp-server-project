@@ -265,6 +265,39 @@ class ParquetDataLoader:
 
         return X, y, self.scaler
 
+    def get_latest_sequence(self, use_cache: bool = True) -> Tuple[np.ndarray, MinMaxScaler, pd.Timestamp]:
+        """
+        获取用于预测下一个时间步的最新序列数据。
+        为了保持一致性，使用全量数据拟合Scaler。
+
+        Returns:
+            (last_sequence_reshaped, filled_scaler, last_date)
+        """
+        if self.df is None:
+            self.fetch(use_cache=use_cache)
+
+        df = self.df
+        if self.feature not in df.columns:
+            raise ValueError(f"Feature '{self.feature}' not found.")
+
+        values = df[self.feature].values.reshape(-1, 1).astype(np.float32)
+
+        # 必须使用与训练时相同的方式拟合Scaler
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled = self.scaler.fit_transform(values)
+
+        seq = self.sequence_length
+        if len(scaled) < seq:
+            raise ValueError(f"数据不足 ({len(scaled)}), 需要至少 {seq} 条")
+
+        # 获取最后一段长度为 sequence_length 的数据
+        last_seq = scaled[-seq:]
+        last_seq = last_seq.reshape(1, seq, 1)
+
+        last_date = df.index[-1]
+
+        return last_seq, self.scaler, last_date
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

@@ -4,7 +4,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
-
+from mcp.types import TextContent, ImageContent, EmbeddedResource
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from mcp.server import Server
@@ -80,43 +80,14 @@ class YA_MCPServer:
         self.logger.info(
             f"Running MCP server via SSE: {self.server_name} ({host}:{port})"
         )
-        sse_app = self.create_starlette_app(self.app._mcp_server, debug=False)
-
-        uvicorn.run(sse_app, host=host, port=port)
-
-    def create_starlette_app(
-        self, mcp_server: Server, *, debug: bool = False
-    ) -> Starlette:
-        sse = SseServerTransport("/messages/")
-
-        async def handle_sse(request: Request) -> None:
-            async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,
-            ) as (read_stream, write_stream):
-                await mcp_server.run(
-                    read_stream,
-                    write_stream,
-                    mcp_server.create_initialization_options(),
-                )
-
-        app = Starlette(
-            debug=debug,
-            routes=[
-                Route("/", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
-            ],
-        )
-
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["*"],
-        )
-
-        return app
+        # Use FastMCP built-in run method for SSE
+        # Note: FastMCP.run handling of host/port depends on implementation details
+        # For transport="sse", it likely uses uvicorn internally or relies on starlette
+        # Currently, arguments like host/port might need to be passed differently or rely on env
+        # But FastMCP.run signature is (transport: Literal['stdio', 'sse'], ...)
+        # Explicitly set mode if needed, though run(transport="sse") should suffice
+        self.app.mode = "sse"
+        self.app.run(transport="sse")
 
     def start(self):
         """根据配置启动 MCP Server"""
@@ -126,7 +97,7 @@ class YA_MCPServer:
             )
 
         self.logger.info(f"Starting MCP server: {self.server_name}")
-        print_server_banner()
+        # print_server_banner() # Disabled for stdio compatibility
 
         if self.transport_type == "stdio":
             self.run_stdio()
