@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
     "data://stocks/{ticker}",
     name="get_stock_data",
     title="Get Stock Data",
-    description="从本地 CSV 获取指定股票的历史数据并以 JSON 返回",
+    description="从本地 parquet 获取指定股票的历史数据并以 JSON 返回",
 )
 def get_stock_data(ticker: str) -> Any:
     """

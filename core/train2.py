@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(
 # 2. 改为绝对导入，确保在 Server 环境下能正确找到模块
 
 
-def train_and_compare(ticker='AAPL', lookback=30, epochs=50, batch_size=32, out_dir='models', period='5y'):
+def train_and_compare(ticker='AAPL', lookback=60, epochs=50, batch_size=32, out_dir='models', period='5y'):
     out_dir = os.path.abspath(out_dir)  # 确保使用绝对路径
     os.makedirs(out_dir, exist_ok=True)
 
@@ -102,14 +102,15 @@ def train_and_compare(ticker='AAPL', lookback=30, epochs=50, batch_size=32, out_
     }
 
 
-def run_analysis(ticker='AAPL', period='5y'):
+def run_analysis(ticker='AAPL', period='5y', lookback=30, epochs=50):
     """
     全流程函数：训练模型 -> 择优 -> 预测下一天股价
     供 MCP Tool 调用
     """
     # 1. 训练并择优
     print(f"[INFO] Starting analysis for {ticker}...")
-    result = train_and_compare(ticker=ticker, period=period)
+    result = train_and_compare(
+        ticker=ticker, period=period, lookback=lookback, epochs=epochs)
 
     winner_path = result['winner_path']
     print(f"[INFO] Winner model: {result['winner']} (saved at {winner_path})")
@@ -119,7 +120,7 @@ def run_analysis(ticker='AAPL', period='5y'):
 
     # 3. 获取最新的序列数据进行推理
     loader = ParquetDataLoader(
-        ticker=ticker, sequence_length=30, period=period)
+        ticker=ticker, sequence_length=lookback, period=period)
     last_seq_scaled, scaler, last_date = loader.get_latest_sequence()
 
     # 4. 预测
