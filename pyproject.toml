@@ -1,7 +1,7 @@
 [project]
-name = "YA_MCPServer_Template"
+name = "YA_MCPServer"
 version = "0.1.0"
-description = "YA MCP Server Template"
+description = "YA MCP Server"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,7 +9,16 @@ dependencies = [
     "black>=25.9.0",
     "colorlog>=6.10.1",
     "httpx>=0.28.1",
+    "joblib",              # 用于模型保存加载 (core/train2.py)
+    "loguru>=0.7.3",       # YA_Common 模块依赖
+    "matplotlib",          # 绘图工具 (core/train2.py)
     "mcp[cli]>=1.14.0",
+    "numpy",               # 数值计算 (core/dataloader.py)
+    "pandas",              # 数据处理 (core/dataloader.py)
     "pyyaml>=6.0.2",
     "ruff>=0.14.4",
+    "scikit-learn",        # 机器学习工具 (core/dataloader.py)
+    "starlette",           # Web 框架组件 (server.py)
+    "tensorflow",          # 深度学习框架 (core/models.py)
+    "uvicorn",             # ASGI 服务器 (server.py)
 ]
