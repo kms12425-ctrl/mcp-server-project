@@ -2,7 +2,10 @@ from datetime import datetime
 import sys
 import logging
 from pathlib import Path
-from colorlog import ColoredFormatter
+try:
+    from colorlog import ColoredFormatter
+except ImportError:
+    ColoredFormatter = None
 from logging.handlers import RotatingFileHandler
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -34,23 +37,29 @@ def setup_logger():
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(console_cfg.get("level", "INFO").upper())
 
-        color_format = (
-            "%(log_color)s%(asctime)s | %(levelname)-8s | "
-            "%(name)s:%(funcName)s:%(lineno)d - %(message)s"
-        )
-
-        console_format = ColoredFormatter(
-            color_format,
-            "%Y-%m-%d %H:%M:%S",
-            log_colors={
-                "TRACE": "cyan",
-                "DEBUG": "blue",
-                "INFO": "green",
-                "WARNING": "yellow",
-                "ERROR": "red",
-                "CRITICAL": "bold_red",
-            },
-        )
+        if ColoredFormatter:
+            color_format = (
+                "%(log_color)s%(asctime)s | %(levelname)-8s | "
+                "%(name)s:%(funcName)s:%(lineno)d - %(message)s"
+            )
+            console_format = ColoredFormatter(
+                color_format,
+                "%Y-%m-%d %H:%M:%S",
+                log_colors={
+                    "TRACE": "cyan",
+                    "DEBUG": "blue",
+                    "INFO": "green",
+                    "WARNING": "yellow",
+                    "ERROR": "red",
+                    "CRITICAL": "bold_red",
+                },
+            )
+        else:
+            console_format = logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | "
+                "%(name)s:%(funcName)s:%(lineno)d - %(message)s",
+                "%Y-%m-%d %H:%M:%S",
+            )
         console_handler.setFormatter(console_format)
         logger.addHandler(console_handler)
 

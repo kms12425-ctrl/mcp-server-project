@@ -18,7 +18,7 @@ from modules.YA_Common.utils.config import (
 from modules.YA_Common.utils.logger import get_logger
 from modules.YA_Common.utils.middleware import exception_handler
 from modules.YA_Common.utils.helpers import print_server_banner
-from setup import setup
+from setup_script import setup
 import tools
 import prompts
 import resources

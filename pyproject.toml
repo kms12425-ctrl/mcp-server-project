@@ -15,6 +15,8 @@ dependencies = [
     "mcp[cli]>=1.14.0",
     "numpy",               # 数值计算 (core/dataloader.py)
     "pandas",              # 数据处理 (core/dataloader.py)
+    "pyarrow",             # Parquet 文件支持
+    "fastparquet",         # Parquet 文件支持 (备选)
     "pyyaml>=6.0.2",
     "ruff>=0.14.4",
     "scikit-learn",        # 机器学习工具 (core/dataloader.py)
@@ -22,3 +24,11 @@ dependencies = [
     "tensorflow",          # 深度学习框架 (core/models.py)
     "uvicorn",             # ASGI 服务器 (server.py)
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["core", "modules", "prompts", "resources", "tools"]
+
