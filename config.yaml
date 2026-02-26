@@ -1,9 +1,9 @@
 server: # 服务器元数据
-  name: YA_MCPServer_Template
-  name_zh: YA MCP 服务器示例
-  author: YA Project
-  description: A simple hello mcp example for MCP Tool.
-  description_zh: MCP Tool 的一个简单示例。
+  name: YA_MCPServer_Stockprediction
+  name_zh: YA MCP 股票预测
+  author: 胡志峰，马俊豪，陈润泽
+  description: An example MCP server for Predicting stock price changes
+  description_zh: 预测股票价格的mcp服务器示例
   version: 0.1.0
 
 transport: # 服务器启动方式配置
