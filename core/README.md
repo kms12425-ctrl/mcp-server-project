@@ -1,3 +1,6 @@
+[中文](#中文) | [English](#english)
+
+<a id="中文"></a>
 # 核心模块 (core/)
 本目录是股票分析系统的底层核心层，包含数据加载、深度学习模型构建、模型训练与预测的全流程实现，为上层 `tools`/`resources` 模块提供核心支撑。
 
@@ -55,3 +58,46 @@ Parquet 文件不存在 / 股票无数据时，抛出 ValueError 并提示具体
 数据量小于 sequence_length 时，抛出 ValueError
 #### 训练失败
 自动捕获异常，保证上层调用鲁棒性
+
+---
+
+<a id="english"></a>
+# Core Modules (core/)
+
+This directory is the underlying core layer of the stock analysis system, containing the full process implementation of data loading, deep learning model construction, model training, and prediction, providing core support for the upper-level `tools`/`resources` modules.
+
+## Directory Structure
+core/ 
+├── dataloader.py -- ParquetDataLoader: Core class for data loading
+├── models.py -- LSTM/GRU model construction functions
+└── train2.py -- Full process functions for model training, comparison, and prediction
+
+## 1. Data Loading (dataloader.py)
+
+Loads stock data from local Parquet files, completes QFQ (Quote Forward Qualification) adjustment, data standardization, and time series generation. It is the data source core of the entire system.
+
+#### Key Features
+| Feature | Description |
+|---|---|
+| Data Source | Local Parquet file (default path: `../data/full_data.parquet`) |
+| Adjustment Processing | Calculates adjustment factor based on `close/raw_close`, performs QFQ adjustment on Open/High/Low |
+| Caching Mechanism | Automatically caches processed data to `.cache_parquet/`, cache validity is 24 hours |
+| Date Filtering | Supports filtering data by start/end date or period (1y/5y/6mo, etc.) |
+| Sequence Generation | Generates (X,y) time series training data adapted for LSTM/GRU |
+
+## 2. Model Construction (models.py)
+
+Provides standardized LSTM/GRU model construction functions, adapted for stock price time series prediction scenarios.
+
+## 3. Training and Prediction (train2.py)
+
+Provides full process functions for model training, comparison, and prediction.
+
+#### Key Features
+| Feature | Description |
+|---|---|
+| Time Series Split | 7:2:1 split for training/validation/test sets (no shuffle, ensuring temporal order) |
+| Early Stopping | EarlyStopping monitors `val_loss`, patience=5, preventing overfitting |
+| Prediction Logic | Predicts the next trading day's price based on the latest sequence |
+
+## Exception Handling
